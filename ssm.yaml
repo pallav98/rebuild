@@ -3,30 +3,51 @@
 - name: Load SSM activation values from file
   set_fact:
     ssm_data: "{{ lookup('file', 'activation.json') | from_json }}"
+    
 
-- name: Ensure amazon-ssm-agent is installed (Ubuntu/Debian)
-  become: true
-  apt:
-    name: amazon-ssm-agent
-    state: present
-    update_cache: yes
+- name: Set activation ID and code 
+  ansible.builtin.set_fact:
+    ssm_activation_id: "{{ ssm_data.ssm_activation_id }}"
+    ssm_activation_code: "{{ ssm_data.ssm_activation_code }}"
 
-- name: Register instance with AWS Systems Manager
-  become: true
-  shell: |
-    amazon-ssm-agent -register \
-      -code "{{ ssm_data.ssm_activation_code }}" \
-      -id "{{ ssm_data.ssm_activation_id }}" \
-      -region "{{ ssm_data.aws_region }}" \
-      --no-verify-identity \
-      --force
-  register: ssm_registration
-  changed_when: "'Successfully registered' in ssm_registration.stdout"
-  failed_when: "'Invalid activation' in ssm_registration.stdout or ssm_registration.rc != 0"
+- name: Remove old agent and cleanup
+  ansible.builtin.shell: |
+    systemctl stop snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+    snap remove amazon-ssm-agent || true
+    rm -rf /var/lib/amazon
+  args:
+    executable: /bin/bash
 
-- name: Enable and start amazon-ssm-agent
-  become: true
-  systemd:
-    name: amazon-ssm-agent
-    state: started
+- name: Install amazon-ssm-agent via snap
+  ansible.builtin.shell: |
+    snap install amazon-ssm-agent --classic
+  args:
+    creates: /snap/bin/amazon-ssm-agent
+  become: yes
+
+- name: Register SSM agent with AWS
+  ansible.builtin.shell: |
+    snap.amazon-ssm-agent.amazon-ssm-agent -register \
+      -code "{{ ssm_activation_code }}" \
+      -id "{{ ssm_activation_id }}" \
+      -region "{{ aws_region }}" \
+      -y
+  become: yes
+
+
+- name: Create systemd drop-in to auto-restart SSM agent
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/snap.amazon-ssm-agent.amazon-ssm-agent.service.d/override.conf
+    content: |
+      [Service]
+      Restart=always
+      RestartSec=5
+  notify: Reload systemd
+  become: yes
+
+- name: Ensure SSM agent is enabled and started
+  ansible.builtin.systemd:
+    name: snap.amazon-ssm-agent.amazon-ssm-agent.service
     enabled: true
+    state: started
+  become: yes
