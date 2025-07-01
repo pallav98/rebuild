@@ -1,0 +1,9 @@
+- name: Write activation.json from secrets
+  run: |
+    cat <<EOF > activation.json
+    {
+      "ssm_activation_id": "${{ secrets.SSM_ACTIVATION_ID }}",
+      "ssm_activation_code": "${{ secrets.SSM_ACTIVATION_CODE }}",
+      "aws_region": "us-east-1"
+    }
+    EOF
