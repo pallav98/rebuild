@@ -1,0 +1,32 @@
+# roles/tasks/ssm.yaml
+
+- name: Load SSM activation values from file
+  set_fact:
+    ssm_data: "{{ lookup('file', 'activation.json') | from_json }}"
+
+- name: Ensure amazon-ssm-agent is installed (Ubuntu/Debian)
+  become: true
+  apt:
+    name: amazon-ssm-agent
+    state: present
+    update_cache: yes
+
+- name: Register instance with AWS Systems Manager
+  become: true
+  shell: |
+    amazon-ssm-agent -register \
+      -code "{{ ssm_data.ssm_activation_code }}" \
+      -id "{{ ssm_data.ssm_activation_id }}" \
+      -region "{{ ssm_data.aws_region }}" \
+      --no-verify-identity \
+      --force
+  register: ssm_registration
+  changed_when: "'Successfully registered' in ssm_registration.stdout"
+  failed_when: "'Invalid activation' in ssm_registration.stdout or ssm_registration.rc != 0"
+
+- name: Enable and start amazon-ssm-agent
+  become: true
+  systemd:
+    name: amazon-ssm-agent
+    state: started
+    enabled: true
